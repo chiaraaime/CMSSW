@@ -4,16 +4,13 @@ process = cms.Process("prova")
 
 process.load("FWCore.MessageService.MessageLogger_cfi")
 
-process.maxEvents = cms.untracked.PSet( input = cms.untracked.int32(1) )
+process.maxEvents = cms.untracked.PSet( input = cms.untracked.int32(-1) )
 
 process.source = cms.Source("PoolSource",
-    fileNames = cms.untracked.vstring(
-        'file:/lustrehome/caime/data/DarkSusy-RunIIAutumn18DR_step3-MiniAOD.root'
-    )
-)
+                            fileNames = cms.untracked.vstring('file:/lustrehome/caime/data/DarkSusy-RunIIAutumn18DR_step3-MiniAOD.root'))
 
 process.genan = cms.EDAnalyzer('DarkSusy_analysis2', 
-                                    muonpat = cms.untracked.InputTag('slimmedMuons'), jetpat = cms.untracked.InputTag('slimmedJets'), trigger = cms.InputTag('TriggerResults','','HLT'))
+                                    muonpat = cms.untracked.InputTag('slimmedMuons'), jetpat = cms.untracked.InputTag('slimmedJets'), trigger = cms.InputTag('TriggerResults','','HLT'), prescales = cms.InputTag('patTrigger'), pathName = cms.string('HLT_Dimuon18_PsiPrime_v14'))
 
 
 

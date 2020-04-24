@@ -24,11 +24,13 @@
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
 #include "FWCore/Framework/interface/Event.h"
+#include "FWCore/Framework/interface/Run.h"
+#include "FWCore/Framework/interface/LuminosityBlock.h"
 #include "FWCore/Framework/interface/MakerMacros.h"
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
- #include "FWCore/Utilities/interface/InputTag.h"
- #include "DataFormats/TrackReco/interface/Track.h"
- #include "DataFormats/TrackReco/interface/TrackFwd.h"
+#include "FWCore/Utilities/interface/InputTag.h"
+#include "DataFormats/TrackReco/interface/Track.h"
+#include "DataFormats/TrackReco/interface/TrackFwd.h"
 //Chiara's addition 
 #include "FWCore/Framework/interface/EventSetup.h" 
 #include "FWCore/Framework/interface/ESHandle.h" 
@@ -44,7 +46,8 @@
 #include "FWCore/Common/interface/TriggerNames.h" // for the trigger
 #include "DataFormats/Common/interface/TriggerResults.h" // for the trigger
 #include "DataFormats/PatCandidates/interface/TriggerObjectStandAlone.h" //for the trigger
-
+#include "DataFormats/PatCandidates/interface/PackedTriggerPrescales.h"
+#include "DataFormats/PatCandidates/interface/TriggerEvent.h" //for trigger prescales
 
 //
 // class declaration
@@ -76,6 +79,7 @@ class DarkSusy_analysis2 : public edm::one::EDAnalyzer<edm::one::SharedResources
       edm::EDGetTokenT<std::vector<pat::Jet> > patjetToken;  //used to select what jets to read from configuration file 
       edm::Service<TFileService> fs;
       edm::EDGetTokenT<edm::TriggerResults> triggerToken;
+      edm::EDGetTokenT<pat::PackedTriggerPrescales> triggerPrescales_;
       // ----------histograms ----------------------------
       TH1F *h_genpt; 
       TH1F *h_jetspt; //all jets
@@ -88,10 +92,14 @@ class DarkSusy_analysis2 : public edm::one::EDAnalyzer<edm::one::SharedResources
       TH1F *h_m2pt; 
       TH1F *h_m3pt;  
       TH1F *h_m4pt; 
-      TH1I *h_muonsnumber; 
+      TH1I *h_muonsnumber;
+      TH1D *histo_; 
       //TCanvas *c1;
       std::map<std::string, int> trig_counts;
-
+      std::string pathName_;
+      std::map<std::pair<std::string, float>,std::pair<int,int> > prescale_;
+      struct trigPrescale {std::string trigName; float trigPres;} ;
+      std::vector<float> lastValue;
 };
 
 //
@@ -108,7 +116,9 @@ class DarkSusy_analysis2 : public edm::one::EDAnalyzer<edm::one::SharedResources
 DarkSusy_analysis2::DarkSusy_analysis2(const edm::ParameterSet& iConfig):
   patmuonToken(consumes<std::vector<pat::Muon> >(iConfig.getUntrackedParameter<edm::InputTag>("muonpat"))),
   patjetToken(consumes<std::vector<pat::Jet> >(iConfig.getUntrackedParameter<edm::InputTag>("jetpat"))),
-  triggerToken(consumes<edm::TriggerResults>(iConfig.getParameter<edm::InputTag>("trigger")))
+  triggerToken(consumes<edm::TriggerResults>(iConfig.getParameter<edm::InputTag>("trigger"))),
+  triggerPrescales_(consumes<pat::PackedTriggerPrescales>(iConfig.getParameter<edm::InputTag>("prescales"))),
+  pathName_(iConfig.getParameter<std::string>("pathName"))
 { //now do what ever initialization is needed
     //----------histograms initialization------------------------
     h_genpt = fs->make<TH1F>("Muonpt", "High pt muons", 200, 0.0, 200.0);
@@ -123,6 +133,7 @@ DarkSusy_analysis2::DarkSusy_analysis2(const edm::ParameterSet& iConfig):
     h_m3pt = fs->make<TH1F>("Muon3pt", "Third muon pt", 100, 0.0, 100.0);
     h_m4pt = fs->make<TH1F>("Muon4pt", "Muon pt", 100, 0.0, 100.0);
     h_muonsnumber = fs->make<TH1I>("Muonsnumber", "number of reconstructed muons", 20, -0.5, 19.5);
+    histo_ = fs->make<TH1D>("histo_", std::string( "Prescale values of " + pathName_ ).c_str(), 100, 0., 100.);
     //c1 = fs->make<TCanvas>("c1","c1");
 }
 
@@ -147,37 +158,57 @@ DarkSusy_analysis2::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
     edm::Handle<std::vector<pat::Muon> > patmuon;
     edm::Handle<std::vector<pat::Jet> > patjet;
     edm::Handle<edm::TriggerResults> triggerResults;
+    edm::Handle<pat::PackedTriggerPrescales> triggerPrescales;
+    edm::Handle<pat::TriggerEvent> triggerEvent;
     iEvent.getByToken(patmuonToken, patmuon);
     iEvent.getByToken(patjetToken, patjet);
     iEvent.getByToken(triggerToken, triggerResults);
-    std::string m_trigger="muon";
-
+    iEvent.getByToken(triggerPrescales_,triggerPrescales);
+    iEvent.getByLabel("patTriggerEvent", triggerEvent);
+    std::string m_trigger="mu";
+    std::string M_trigger="Mu";
+    const edm::RunID &run=iEvent.getRun().id();
+    int n_run=run.run();
+    const edm::LuminosityBlockID &lumi=iEvent.getLuminosityBlock().id();
+    int n_lumi=lumi.luminosityBlock();
+   
     //---------TRIGGER------------  
     if (triggerResults.isValid()) {
     	const edm::TriggerNames &triggerNames = iEvent.triggerNames(*triggerResults);
     	const std::vector<std::string> &triggerNames_ = triggerNames.triggerNames();
+	if (lastValue.size()<triggerResults->size()){
+	  lastValue.resize(triggerResults->size(), 0.0);
+	}
     	for (unsigned int iHLT = 0; iHLT < triggerResults->size(); iHLT++) {
           int hlt = triggerResults->accept(iHLT);
-          //std::cout << "Trigger " << triggerNames_[iHLT]<< (triggerResults->accept(iHLT)? "PASS": "fail(not to run)") << std::endl;  
+          float prescale = triggerPrescales->getPrescaleForIndex(iHLT); 
           if (trig_counts.find(triggerNames_[iHLT]) == trig_counts.end()) {trig_counts[triggerNames_[iHLT]]=0;}
+
 	  if (hlt >0){ //if the trigger pass
-	    if (triggerNames_[iHLT].find(m_trigger) !=std::string::npos){
-	      trig_counts[triggerNames_[iHLT]]++;
-	      //std::cout<< "Trigger "<< triggerNames_[iHLT]  <<std::endl;
+	    if (triggerNames_[iHLT].find(m_trigger) !=std::string::npos){ 
+	      if(lastValue[iHLT]<prescale){
+	        lastValue[iHLT]=prescale;
+		prescale_.insert(std::make_pair(std::make_pair(triggerNames_[iHLT], prescale),std::make_pair(n_run, n_lumi)));
+		std::cout << "sto aggiungendo" << std::endl;
+	      }
 	    }
 	  }
-	  /*for(auto elem : trig_counts)
-	   {
-             std::cout << elem.first << " " << elem.second  << "\n";
-	     }*/
-	  //std::cout << "Trigger " << triggerNames_[iHLT]<<"----"  << std::endl;
-        }
-  for(auto elem : trig_counts)
-    { if (elem.second!=0)
-	{ std::cout << elem.first << " " << elem.second  << "\n";}
-	     }
+	    // std::cout << "Trigger " << triggerNames_[iHLT]<<", prescale " << prescale << ": " << (triggerResults->accept(iHLT)? "PASS": "fail(not to run)")  << std::endl;
+            trig_counts[triggerNames_[iHLT]]++; 
+	  }
 
     }
+    /*print to check
+	for(auto elem : prescale_)
+	  { 
+	    std::cout <<"Trigger:" << elem.first.first << ", prescale: " << elem.first.second  << ", run: " <<elem.second.first << ", lumiBlock: "<<elem.second.second <<"\n";
+	    }*/
+
+	/* const pat::TriggerPathCollection* paths =  triggerEvent->paths();
+   for ( pat::TriggerPathCollection::const_iterator path = paths->begin();path != paths->end(); ++path ) {
+      std::cout << " " << path->name() << ":" << " prescale = " << path->prescale() << std::endl;  
+      }*/
+
     //---------MUONS------------
     //sort muons by decreasing pt and fill the histogram just with the first four 
     std::vector<float> m_pt;
